@@ -96,5 +96,5 @@ func main() {
 
 	wg.Wait()
 	sendFeishuBotMsg("[ABML] Stoped Listen")
-	log.Println("[+] Stop Listener")
+	log.Println("[+] Finish AutoBuyMask")
 }

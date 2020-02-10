@@ -38,7 +38,7 @@ func (lm *ListenMaskV2) getSkuNumStr() {
 
 func (lm *ListenMaskV2) genListenReq() {
 	log.Println("[-] genListenReq")
-	stockURL, err := url.Parse("https://c0.3.cn/stock")
+	stockURL, err := url.Parse("https://c0.3.cn/stocks")
 	if err != nil {
 		return
 	}
@@ -51,6 +51,7 @@ func (lm *ListenMaskV2) genListenReq() {
 	params.Set("_", getRandomTs())
 	stockURL.RawQuery = params.Encode()
 	lm.listenURL = stockURL.String()
+	log.Println("[-] StockURL", lm.listenURL)
 	req, err := http.NewRequest("GET", lm.listenURL, nil)
 	if err != nil {
 		log.Println("[-]", err.Error())
@@ -130,7 +131,7 @@ func (lm *ListenMaskV2) listenMask() {
 		if stop {
 			break
 		}
-		if i%(60*10) == 0 {
+		if i%(60*100) == 0 {
 			go sendFeishuBotMsg("[ABML] I am listening...")
 		}
 		i++
@@ -147,6 +148,5 @@ func (lm *ListenMaskV2) listenMask() {
 func RunListenMaskV2() *ListenMaskV2 {
 	lm := &ListenMaskV2{}
 	lm.initHTTPClient()
-	// go lm.listenMask()
 	return lm
 }

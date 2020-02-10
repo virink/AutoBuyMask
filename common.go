@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/Unknwon/goconfig"
+	"golang.org/x/text/encoding/simplifiedchinese"
 )
 
 // SkuMeta - Sku Meta
@@ -240,7 +241,8 @@ func getMetaByItem(metaClient *http.Client, skuid string) (*SkuMeta, error) {
 		return meta, err
 	}
 	defer resp.Body.Close()
-	body, err := ioutil.ReadAll(resp.Body)
+	reader := simplifiedchinese.GB18030.NewDecoder().Reader(resp.Body)
+	body, err := ioutil.ReadAll(reader)
 	if err != nil {
 		log.Println("[-] GMBI::ReadBody :", err.Error())
 		return meta, err
@@ -249,21 +251,21 @@ func getMetaByItem(metaClient *http.Client, skuid string) (*SkuMeta, error) {
 	// Cat
 	re = regexp.MustCompile(`(?m)cat:.\[(\d+),(\d+),(\d+)\]`)
 	res = re.FindAllStringSubmatch(bodyStr, -1)
-	if len(res[0]) == 4 {
+	if len(res) > 0 && len(res[0]) == 4 {
 		meta.Cat = fmt.Sprintf("%s,%s,%s", res[0][1], res[0][2], res[0][3])
 		log.Println("[+] GMBI::Cat :", meta.Cat)
 	}
 	// VenderId
 	re = regexp.MustCompile(`(?m)venderId:(\d+),`)
 	res = re.FindAllStringSubmatch(bodyStr, -1)
-	if len(res[0]) == 2 {
+	if len(res) > 0 && len(res[0]) == 2 {
 		meta.VenderID = res[0][1]
 		log.Println("[+] GMBI::VenderID :", meta.VenderID)
 	}
 	// Name/Title
-	re = regexp.MustCompile(`(?m)\<title\>(.*?)-京东\<\/title\>`)
+	re = regexp.MustCompile(`(?m)\<title\>(.*?)\<\/title\>`)
 	res = re.FindAllStringSubmatch(bodyStr, -1)
-	if len(res[0]) == 2 {
+	if len(res) > 0 && len(res[0]) == 2 {
 		meta.Name = res[0][1]
 		log.Println("[+] GMBI::Name :", meta.Name)
 	}

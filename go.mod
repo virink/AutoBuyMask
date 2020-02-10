@@ -7,5 +7,6 @@ require (
 	github.com/smartystreets/goconvey v1.6.4 // indirect
 	github.com/stamblerre/gocode v1.0.0 // indirect
 	github.com/tidwall/gjson v1.4.0
+	golang.org/x/text v0.3.0
 	golang.org/x/tools v0.0.0-20200207224406-61798d64f025 // indirect
 )
