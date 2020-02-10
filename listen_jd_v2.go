@@ -102,10 +102,13 @@ func (lm *ListenMaskV2) httpGetForListen() {
 			skuState[skuid] = false
 			// Webhook
 			go http.Get(fmt.Sprintf("%s%s", config["webhook"], skuid))
+			// Notice
 			go func(skuid string) {
-				msg := fmt.Sprintf("[ABML] Push [%s] To WebHook", skuid)
-				log.Println("[*]", msg)
+				msg := fmt.Sprintf("[ABML] Congratulation!!! https://item.jd.com/%s.html 有货!", skuid)
 				sendFeishuBotMsg(msg)
+				log.Println("[+]", msg)
+				log.Println("[+]", msg)
+				log.Println("[+]", msg)
 			}(skuid)
 			// 下单
 			// TODO: 实现京东自动下单
