@@ -6,10 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"math/rand"
 	"net/http"
-	"net/http/cookiejar"
 	"os"
 	"regexp"
 	"strconv"
@@ -17,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Unknwon/goconfig"
+	"github.com/sirupsen/logrus"
 	"golang.org/x/text/encoding/simplifiedchinese"
 )
 
@@ -45,56 +44,84 @@ type FsMessage struct {
 }
 
 var (
-	config       map[string]string
-	noticeMsg    = ""
-	tr           *http.Transport
-	jar          *cookiejar.Jar
-	listenClient *http.Client
-	stop         = false
-	randSrc      rand.Source
-	skuState     map[string]bool
-	refresh      bool
-
-	skuMetas map[string]*SkuMeta
-	area     = ""
-
-	waittime         = 60
-	speed    float64 = 1
-	ch       chan os.Signal
+	randSrc    rand.Source
+	logger     *logrus.Logger
+	tr         *http.Transport
+	config     map[string]string
+	skuState   map[string]bool
+	skuMetas   map[string]*SkuMeta
+	ch         chan os.Signal
+	debug      bool    = false
+	refresh    bool    = false
+	verbose    bool    = false
+	stop       bool    = false
+	areaNext   string  = ""
+	waittime   int     = 60
+	speed      float64 = 1
+	orderdelay int     = 30
+	command    string
+	justListen bool = false
 )
+
+// VkLogHook to send error logs via bot.
+type VkLogHook struct{}
+
+// Fire - VkLogHook::Fire
+func (hook *VkLogHook) Fire(entry *logrus.Entry) error {
+	line, err := entry.String()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Unable to read entry, %v", err)
+		return err
+	}
+	if entry.Level == logrus.ErrorLevel {
+		sendBotMsg(line)
+	}
+	return nil
+}
+
+// Levels - VkLogHook::Levels
+func (hook *VkLogHook) Levels() []logrus.Level {
+	return logrus.AllLevels
+}
+
+// NewVkLogHook - Create a hook to be added to an instance of logger
+func NewVkLogHook() *VkLogHook {
+	return &VkLogHook{}
+}
 
 func loadConf() (map[string]string, error) {
 	config = make(map[string]string, 5)
 	cfg, err := goconfig.LoadConfigFile("config.conf")
 	if err != nil {
-		log.Println("[-] Load conf file 'config.conf' error ", err)
+		logger.Errorln("[-] Load conf file 'config.conf' error ", err)
 		return config, err
 	}
 	// core
 	config["cookies"], err = cfg.GetValue("core", "cookies")
 	if err != nil {
-		log.Println("[-] Load conf core.cookies error ", err)
-		return config, err
+		logger.Warningln("[-] Load conf core.cookies error")
+		config["cookies"] = ""
 	}
 	config["wxBotKey"], err = cfg.GetValue("core", "wxbotkey")
 	if err != nil {
-		log.Println("[-] Load conf core.wxbotkey error : ", err)
-		return config, err
+		config["wxBotKey"] = ""
 	}
 	config["fsBotKey"], err = cfg.GetValue("core", "fsbotkey")
 	if err != nil {
-		log.Println("[-] Load conf core.fsbotkey error ", err)
-		return config, err
+		config["fsBotKey"] = ""
+	}
+	config["paymentpwd"], err = cfg.GetValue("core", "paymentpwd")
+	if err != nil {
+		config["paymentpwd"] = ""
 	}
 	config["area"], err = cfg.GetValue("core", "area")
 	if err != nil {
-		log.Println("[-] Load conf core.area error ", err)
+		logger.Fatalln("[-] Load conf core.area error ", err)
 		return config, err
 	}
 	config["webhook"], err = cfg.GetValue("core", "webhook")
 	if err != nil {
-		log.Println("[-] Load conf core.webhook error ", err)
-		return config, err
+		config["webhook"] = ""
 	}
 	config["waittime"], err = cfg.GetValue("core", "waittime")
 	if err != nil {
@@ -104,34 +131,42 @@ func loadConf() (map[string]string, error) {
 	if err != nil {
 		config["speed"] = "1"
 	}
-
-	area = strings.Replace(config["area"], ",", "_", -1)
+	config["orderdelay"], err = cfg.GetValue("core", "orderdelay")
+	if err != nil {
+		config["orderdelay"] = "30"
+	}
+	config["command"], err = cfg.GetValue("core", "command")
+	if err != nil {
+		config["command"] = ""
+	}
+	areaNext = strings.Replace(config["area"], ",", "_", -1)
 	waittime, err = strconv.Atoi(config["waittime"])
 	if err != nil {
 		waittime = 60
 	}
 	speed, err = strconv.ParseFloat(config["speed"], 64)
-	// speed, err = strconv.Atoi(config["speed"])
 	if err != nil {
 		speed = 1
 	}
-	// config["wait"]
+	orderdelay, err = strconv.Atoi(config["orderdelay"])
+	if err != nil {
+		orderdelay = 30
+	}
 	return config, nil
 }
 
 func httpPostJSON(sendURL string, sendData []byte) bool {
-	// log.Println("[+] httpPostJSON url : ", sendURL)
 	client := &http.Client{Transport: tr}
 	req, err := http.NewRequest("POST", sendURL, bytes.NewBuffer(sendData))
 	if err != nil {
-		log.Println("[-] NewRequest error : ", err)
+		logger.Errorln("[-] HPJ::NewRequest:", err)
 		return false
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Charset", "UTF-8")
 	resp, err := client.Do(req)
 	if err != nil {
-		log.Println("[-] Send msg error : ", err)
+		logger.Errorln("[-] HPJ::DoRequest:", err)
 		return false
 	}
 	defer resp.Body.Close()
@@ -160,6 +195,15 @@ func sendFeishuBotMsg(content string) {
 	httpPostJSON(sendURL, msg)
 }
 
+func sendBotMsg(content string) {
+	if len(config["fsBotKey"]) > 0 {
+		sendFeishuBotMsg(content)
+	}
+	if len(config["wxBotKey"]) > 0 {
+		sendWeChatBotMsg(content)
+	}
+}
+
 func getCallback() string {
 	return fmt.Sprintf("jQuery%07v", rand.New(randSrc).Int31n(1000000))
 }
@@ -176,33 +220,33 @@ func setReqHeader(req *http.Request) {
 func loadSkuMetaCache() bool {
 	file, err := os.Open(".skumeta")
 	if err != nil {
-		log.Println("[-] LoadSkuMetaCache::OpenFile", err.Error())
+		logger.Errorln("[-] LSMC::OpenFile", err.Error())
 		return false
 	}
 	dec := gob.NewDecoder(file)
 	skuMetas = make(map[string]*SkuMeta, 0)
 	err = dec.Decode(&skuMetas)
 	if err != nil {
-		log.Println("[-] LoadSkuMetaCache::Decode", err.Error())
+		logger.Errorln("[-] LSMC::Decode", err.Error())
 		return false
 	}
-	log.Println("[-] LoadSkuMetaCache Sucess")
+	logger.Infoln("[+] LSMC Success")
 	return true
 }
 
 func saveSkuMetaCache() bool {
 	file, err := os.Create(".skumeta")
 	if err != nil {
-		log.Println("[-] SaveSkuMetaCache::CreateFile", err.Error())
+		logger.Errorln("[-] SSMC::CreateFile", err.Error())
 		return false
 	}
 	enc := gob.NewEncoder(file)
 	err = enc.Encode(skuMetas)
 	if err != nil {
-		log.Println("[-] SaveSkuMetaCache::Enccode", err.Error())
+		logger.Errorln("[-] SSMC::Enccode", err.Error())
 		return false
 	}
-	log.Println("[-] SaveSkuMetaCache Sucess")
+	logger.Infoln("[+] SSMC Success")
 	return true
 }
 
@@ -210,12 +254,12 @@ func loadMask() (map[string]int, error) {
 	masks := make(map[string]int, 0)
 	f, err := ioutil.ReadFile("masks.json")
 	if err != nil {
-		log.Println("[-]", err.Error())
+		logger.Fatalln("[-]", err.Error())
 		return masks, err
 	}
 	err = json.Unmarshal(f, &masks)
 	if err != nil {
-		log.Println("[-]", err.Error())
+		logger.Errorln("[-]", err.Error())
 		return masks, err
 	}
 	return masks, nil
@@ -228,23 +272,23 @@ func getMetaByItem(metaClient *http.Client, skuid string) (*SkuMeta, error) {
 	)
 	meta := &SkuMeta{ID: skuid}
 	itemURL := fmt.Sprintf("https://item.jd.com/%s.html", skuid)
-	log.Println("[+] ItemURL :", itemURL)
+	logger.Infoln("[+] ItemURL :", itemURL)
 	req, err := http.NewRequest("GET", itemURL, nil)
 	if err != nil {
-		log.Println("[-] GMBI::NewRequest :", err.Error())
+		logger.Errorln("[-] GMBI::NewRequest :", err.Error())
 		return meta, err
 	}
 	setReqHeader(req)
 	resp, err := metaClient.Do(req)
 	if err != nil {
-		log.Println("[-] GMBI::DoRequest: ", err.Error())
+		logger.Errorln("[-] GMBI::DoRequest:: ", err.Error())
 		return meta, err
 	}
 	defer resp.Body.Close()
 	reader := simplifiedchinese.GB18030.NewDecoder().Reader(resp.Body)
 	body, err := ioutil.ReadAll(reader)
 	if err != nil {
-		log.Println("[-] GMBI::ReadBody :", err.Error())
+		logger.Errorln("[-] GMBI::ReadBody :", err.Error())
 		return meta, err
 	}
 	bodyStr := string(body)
@@ -253,25 +297,25 @@ func getMetaByItem(metaClient *http.Client, skuid string) (*SkuMeta, error) {
 	res = re.FindAllStringSubmatch(bodyStr, -1)
 	if len(res) > 0 && len(res[0]) == 4 {
 		meta.Cat = fmt.Sprintf("%s,%s,%s", res[0][1], res[0][2], res[0][3])
-		log.Println("[+] GMBI::Cat :", meta.Cat)
+		logger.Infoln("[+] GMBI::Cat :", meta.Cat)
 	}
 	// VenderId
 	re = regexp.MustCompile(`(?m)venderId:(\d+),`)
 	res = re.FindAllStringSubmatch(bodyStr, -1)
 	if len(res) > 0 && len(res[0]) == 2 {
 		meta.VenderID = res[0][1]
-		log.Println("[+] GMBI::VenderID :", meta.VenderID)
+		logger.Infoln("[+] GMBI::VenderID :", meta.VenderID)
 	}
 	// Name/Title
 	re = regexp.MustCompile(`(?m)\<title\>(.*?)\<\/title\>`)
 	res = re.FindAllStringSubmatch(bodyStr, -1)
 	if len(res) > 0 && len(res[0]) == 2 {
 		meta.Name = res[0][1]
-		log.Println("[+] GMBI::Name :", meta.Name)
+		logger.Infoln("[+] GMBI::Name :", meta.Name)
 	}
 	// StockURL
-	meta.StockURL = fmt.Sprintf("https://c0.3.cn/stock?skuId=%s&area=%s&venderId=%s&buyNum=1&cat=%s&callback=%s", skuid, area, meta.VenderID, meta.Cat, getCallback())
-	log.Println("[+] GMBI::StockURL :", meta.StockURL)
+	meta.StockURL = fmt.Sprintf("https://c0.3.cn/stock?skuId=%s&area=%s&venderId=%s&buyNum=1&cat=%s&callback=%s", skuid, areaNext, meta.VenderID, meta.Cat, getCallback())
+	logger.Infoln("[+] GMBI::StockURL :", meta.StockURL)
 	return meta, nil
 }
 
@@ -283,7 +327,7 @@ func getSkuMeta(masks map[string]int) bool {
 	for skuid, num := range masks {
 		meta, err := getMetaByItem(metaClient, skuid)
 		if err != nil {
-			log.Println("[-] Sku [", skuid, "] Error :", err.Error())
+			logger.Errorln("[-] Sku [", skuid, "] Error :", err.Error())
 			continue
 		}
 		meta.Num = num
@@ -293,4 +337,15 @@ func getSkuMeta(masks map[string]int) bool {
 		return false
 	}
 	return true
+}
+
+func getCallbackBody(body []byte, msg string) []byte {
+	if len(body) > 14 {
+		body = body[14 : len(body)-1]
+	} else {
+		msg = "[!] %s::GetCallbackBody Error"
+		logger.Errorln(msg, string(body))
+		return nil
+	}
+	return body
 }

@@ -11,6 +11,8 @@
 获取元数据并监控 `./autobuymask -r` **一定要先获取元数据**
 利用缓存开始监控 `./autobuymask`
 
+其他，`./autobuymask -h`
+
 ### 修改配置文件
 
 自己改名
@@ -29,12 +31,18 @@ area=1,72,2799,0
 ; eg. http://xxxx/webhook/[skuid] - http://xxxx/webhook/51137726169
 ; eg. http://xxxx/webhook/?id=[skuid] - http://xxxx/webhook/?id=51137726169
 webhook=
-; V2 暂时用不到 -.-
+; JD 自动下单用户 Cookie
 cookies=
 ; 成功查询到商品信息，推送间隔时间。(单位 秒)
 waittime=30
 ; 监控间隔时间。(单位 秒)
 speed=0.2
+; 第二次订单等待时间
+orderdelay=30
+; 支付密码
+paymentpwd=123456
+; 有货的时候执行命令
+command=whoami
 ```
 
 **masks.json**
@@ -48,3 +56,8 @@ value = num (下单数量，暂时没啥用)
   "skuid2":1,
 }
 ```
+
+## Referer
+
+1. > [https://github.com/tychxn/jd-assistant](https://github.com/tychxn/jd-assistant)
+2. > [https://github.com/cycz/jdBuyMask](https://github.com/cycz/jdBuyMask)
