@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/lizongshen/gocommand"
@@ -85,7 +86,7 @@ func main() {
 
 	wg := &sync.WaitGroup{}
 	ch = make(chan os.Signal, 1)
-	signal.Notify(ch, os.Interrupt, os.Kill)
+	signal.Notify(ch, os.Interrupt, syscall.SIGTERM)
 
 	var o *OrderJD
 	if !justListen {
@@ -132,7 +133,7 @@ func main() {
 			}
 			// Webhook
 			if len(config["webhook"]) > 0 {
-				http.Get(fmt.Sprintf("%s%s", config["webhook"], skuid))
+				_, _ = http.Get(fmt.Sprintf("%s%s", config["webhook"], skuid))
 				msg := fmt.Sprintf("[ABML] Push [%s] To WebHook", skuid)
 				logger.Infoln("[*]", msg)
 				sendBotMsg(msg)
@@ -150,14 +151,11 @@ func main() {
 	wg.Add(1)
 	go func(wg *sync.WaitGroup, o *OrderJD) {
 		defer wg.Done()
-		select {
-		case <-ch:
-			if !justListen {
-				o.addSkuID("0")
-			}
-			stop = true
-			break
+		<-ch
+		if !justListen {
+			o.addSkuID("0")
 		}
+		stop = true
 	}(wg, o)
 
 	wg.Wait()

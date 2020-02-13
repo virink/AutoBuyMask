@@ -44,11 +44,11 @@ type FsMessage struct {
 }
 
 var (
+	// skuState   map[string]bool
 	randSrc    rand.Source
 	logger     *logrus.Logger
 	tr         *http.Transport
 	config     map[string]string
-	skuState   map[string]bool
 	skuMetas   map[string]*SkuMeta
 	ch         chan os.Signal
 	debug      bool    = false
@@ -224,7 +224,7 @@ func loadSkuMetaCache() bool {
 		return false
 	}
 	dec := gob.NewDecoder(file)
-	skuMetas = make(map[string]*SkuMeta, 0)
+	skuMetas = make(map[string]*SkuMeta)
 	err = dec.Decode(&skuMetas)
 	if err != nil {
 		logger.Errorln("[-] LSMC::Decode", err.Error())
@@ -251,7 +251,7 @@ func saveSkuMetaCache() bool {
 }
 
 func loadMask() (map[string]int, error) {
-	masks := make(map[string]int, 0)
+	masks := make(map[string]int)
 	f, err := ioutil.ReadFile("masks.json")
 	if err != nil {
 		logger.Fatalln("[-]", err.Error())
@@ -323,7 +323,7 @@ func getSkuMeta(masks map[string]int) bool {
 	metaClient := &http.Client{
 		Transport: tr,
 	}
-	skuMetas = make(map[string]*SkuMeta, 0)
+	skuMetas = make(map[string]*SkuMeta)
 	for skuid, num := range masks {
 		meta, err := getMetaByItem(metaClient, skuid)
 		if err != nil {
@@ -333,17 +333,14 @@ func getSkuMeta(masks map[string]int) bool {
 		meta.Num = num
 		skuMetas[skuid] = meta
 	}
-	if len(skuMetas) == 0 {
-		return false
-	}
-	return true
+	return len(skuMetas) != 0
 }
 
 func getCallbackBody(body []byte, msg string) []byte {
 	if len(body) > 14 {
 		body = body[14 : len(body)-1]
 	} else {
-		msg = "[!] %s::GetCallbackBody Error"
+		msg = fmt.Sprintf("[!] %s::GetCallbackBody Error", msg)
 		logger.Errorln(msg, string(body))
 		return nil
 	}

@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -42,11 +41,11 @@ type JDCartItem struct {
 
 // OrderJD - Order JD
 type OrderJD struct {
-	orderClient  *http.Client
-	heartbeatReq *http.Request
-	skuChan      chan string
-	skuState     map[string]bool
-	riskControl  string
+	// heartbeatReq *http.Request
+	orderClient *http.Client
+	skuChan     chan string
+	skuState    map[string]bool
+	riskControl string
 }
 
 func (o *OrderJD) initHTTPClient() {
@@ -91,7 +90,7 @@ func (o *OrderJD) heartbeat() {
 		logger.Errorln("[-] HB::ReadBody", err.Error())
 		return
 	}
-	jsonObj := make(map[string]interface{}, 0)
+	jsonObj := make(map[string]interface{})
 	err = json.Unmarshal(getCallbackBody(body, "HB"), &jsonObj)
 	if err != nil {
 		logger.Errorln("[-] HB::UnmarshalBody", err.Error())
@@ -127,20 +126,12 @@ func (o *OrderJD) cancelAllItem() bool {
 	return true
 }
 
-func strToInt(s string) int {
-	i, err := strconv.Atoi(s)
-	if err != nil {
-		return 0
-	}
-	return i
-}
-
 func getTagValue(v string) string {
 	return strings.Trim(v, " \t\r\n")
 }
 
 func (o *OrderJD) getCartDetail() (map[string]*JDCartItem, error) {
-	cartItems := make(map[string]*JDCartItem, 0)
+	cartItems := make(map[string]*JDCartItem)
 	cartURL := "https://cart.jd.com/cart.action"
 	req, err := http.NewRequest("GET", cartURL, nil)
 	if err != nil {
@@ -208,7 +199,11 @@ func (o *OrderJD) getCartDetail() (map[string]*JDCartItem, error) {
 func (o *OrderJD) changeItemNumInCart(num int, item *JDCartItem) bool {
 	changeURL := "https://cart.jd.com/changeNum.action"
 	var r http.Request
-	r.ParseForm()
+	err := r.ParseForm()
+	if err != nil {
+		logger.Errorln("[-] CINIC::ParseForm:", err.Error())
+		return false
+	}
 	r.Form.Add("t", "0")
 	r.Form.Add("outSkus", "")
 	r.Form.Add("random", getRandomTs())
@@ -405,14 +400,15 @@ func (o *OrderJD) submitOrder() bool {
 		return true
 	}
 	code := obj[3].Int()
-	msg := obj[2].String()
+	errMsg := obj[2].String()
 	if code == 0 {
-		msg += "(下单商品可能为第三方商品，将切换为普通发票进行尝试)"
+		errMsg += "(下单商品可能为第三方商品，将切换为普通发票进行尝试)"
 	} else if code == 60077 {
-		msg += "(可能是购物车为空 或 未勾选购物车中商品)"
+		errMsg += "(可能是购物车为空 或 未勾选购物车中商品)"
 	} else if code == 60123 {
-		msg += "(需要在 config.conf 文件中配置支付密码)"
+		errMsg += "(需要在 config.conf 文件中配置支付密码)"
 	}
+	logger.Errorln("[-] Order fail", errMsg)
 	logger.Debug("[D] SubmitOrder", string(body))
 	return false
 }
@@ -421,17 +417,20 @@ func (o *OrderJD) doOrder(skuID string) {
 	logger.Infoln("[+] Do Order [", skuID, "]")
 	i := 1
 	for {
-		if i == 2 {
+		if i > 3 {
 			break
 		}
 		logger.Infof("[+] ===== 第 [ %d / %d ] 次尝试提交订单 =====\n", i, 3)
 		msg := fmt.Sprintf("[!!!] [%d/3 submit] [%s] Order ", i, skuID)
+		i++
 		if !o.cancelAllItem() {
 			logger.Errorln("[-] DoOrder : Cannot cancel all item")
+			continue
 		}
 		cartItems, err := o.getCartDetail()
 		if err != nil {
 			logger.Errorln("[-] DoOrder : ", err.Error())
+			continue
 		}
 		ret := false
 		if item, ok := cartItems[skuID]; ok {
@@ -447,6 +446,7 @@ func (o *OrderJD) doOrder(skuID string) {
 				if o.submitOrder() {
 					msg += "Success!"
 					go sendBotMsg(msg)
+					break
 				} else {
 					msg += "Fail!"
 				}
@@ -459,7 +459,6 @@ func (o *OrderJD) doOrder(skuID string) {
 		}
 		logger.Infoln(msg)
 		time.Sleep(5 * time.Second)
-		i++
 	}
 }
 
@@ -467,41 +466,35 @@ func (o *OrderJD) orderSku() {
 	w := &sync.WaitGroup{}
 	for {
 		logger.Infoln("[+] [JD] Waiting OrderSku chan...")
-		select {
-		case skuID := <-o.skuChan:
-			logger.Infoln("[+] skuID := <-o.skuChan:", skuID)
-			if skuID == "0" {
-				goto Loop
-			}
-			if o.skuState[skuID] {
-				continue
-			}
-			logger.Infoln("[+] Order [", skuID, "]")
-			o.skuState[skuID] = true
-			w.Add(1)
-			go func() {
-				defer w.Done()
-				o.doOrder(skuID)
-			}()
-			// Reset
-			w.Add(1)
-			go func() {
-				defer w.Done()
-				time.Sleep(time.Duration(orderdelay) * time.Second)
-				o.skuState[skuID] = false
-			}()
+		skuID := <-o.skuChan
+		logger.Infoln("[+] skuID := <-o.skuChan:", skuID)
+		if skuID == "0" {
 			break
 		}
+		if o.skuState[skuID] {
+			continue
+		}
+		logger.Infoln("[+] Order [", skuID, "]")
+		o.skuState[skuID] = true
+		w.Add(1)
+		go func() {
+			defer w.Done()
+			o.doOrder(skuID)
+		}()
+		// Reset
+		w.Add(1)
+		go func() {
+			defer w.Done()
+			time.Sleep(time.Duration(orderdelay) * time.Second)
+			o.skuState[skuID] = false
+		}()
+		w.Wait()
 	}
-Loop:
-	w.Wait()
-	logger.Infoln("[+] Finish orderSku")
 }
 
 func (o *OrderJD) addSkuID(skuID string) {
 	logger.Infoln("[+] [JD] Add Order ", skuID)
 	o.skuChan <- skuID
-	return
 }
 
 // RunOrderJD - Run Order Sku

@@ -17,6 +17,7 @@ import (
 type ListenMaskV1 struct {
 	listenClient *http.Client
 	skuNum       string
+	skuState     map[string]bool
 }
 
 func (lm *ListenMaskV1) httpGetForListen() {
@@ -53,7 +54,7 @@ func (lm *ListenMaskV1) httpGetForListen() {
 		return
 	}
 	body = getCallbackBody(body, "HGFL")
-	state := make(map[string]map[string]interface{}, 0)
+	state := make(map[string]map[string]interface{})
 	err = json.Unmarshal(body, &state)
 	if err != nil {
 		logger.Errorln("[-] HGFL::UnmarshalBody", err.Error())
@@ -63,7 +64,7 @@ func (lm *ListenMaskV1) httpGetForListen() {
 	}
 	for skuid := range state {
 		// 已经执行 webhook || not onsell
-		if !skuState[skuid] {
+		if !lm.skuState[skuid] {
 			continue
 		}
 		// 库存状态编号 33,39,40,36,34
@@ -73,16 +74,16 @@ func (lm *ListenMaskV1) httpGetForListen() {
 			// 是否上架
 			if ok, err := lm.isSkuOnSell(skuid); err != nil || !ok {
 				// logger.Errorln("[-] Sku [", skuid, "] is not onsell")
-				skuState[skuid] = false
+				lm.skuState[skuid] = false
 				continue
 			}
 			// Webhook
-			skuState[skuid] = false
+			lm.skuState[skuid] = false
 
 			// time.Sleep(2 * time.Second)
 			go func(skuid string) {
 				if len(config["webhook"]) > 0 {
-					http.Get(fmt.Sprintf("%s%s_%d", config["webhook"], skuid, skuMetas[skuid].Num))
+					_, err = http.Get(fmt.Sprintf("%s%s_%d", config["webhook"], skuid, skuMetas[skuid].Num))
 					msg := fmt.Sprintf("[ABML] Push [%s] To WebHook", skuid)
 					logger.Infoln("[*]", msg)
 					sendBotMsg(msg)
@@ -92,7 +93,7 @@ func (lm *ListenMaskV1) httpGetForListen() {
 			// Reset State
 			go func(skuid string) {
 				time.Sleep(time.Duration(waittime) * time.Second)
-				skuState[skuid] = true
+				lm.skuState[skuid] = true
 			}(skuid)
 		}
 	}
