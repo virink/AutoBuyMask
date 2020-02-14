@@ -41,11 +41,11 @@ type JDCartItem struct {
 
 // OrderJD - Order JD
 type OrderJD struct {
-	// heartbeatReq *http.Request
 	orderClient *http.Client
 	skuChan     chan string
 	skuState    map[string]bool
 	riskControl string
+	expired     bool
 }
 
 func (o *OrderJD) initHTTPClient() {
@@ -96,6 +96,13 @@ func (o *OrderJD) heartbeat() {
 		logger.Errorln("[-] HB::UnmarshalBody", err.Error())
 		logger.Errorln("[-] HeartbeatURL", heartbeatURL)
 		logger.Debug(string(body))
+		return
+	}
+	if jsonObj["nick"] == "" {
+		logger.Errorln("[!!!] HB::Heartbeat:: Session is Expired!!!")
+		logger.Errorln("[!!!] HB::Heartbeat:: Session is Expired!!!")
+		logger.Errorln("[!!!] HB::Heartbeat:: Session is Expired!!!")
+		o.expired = true
 		return
 	}
 	logger.Infof("[+] User [ %s ] is alive!\n", jsonObj["nick"])
@@ -468,7 +475,7 @@ func (o *OrderJD) orderSku() {
 		logger.Infoln("[+] [JD] Waiting OrderSku chan...")
 		skuID := <-o.skuChan
 		logger.Infoln("[+] skuID := <-o.skuChan:", skuID)
-		if skuID == "0" {
+		if skuID == "0" || o.expired {
 			break
 		}
 		if o.skuState[skuID] {
@@ -503,6 +510,7 @@ func RunOrderJD() *OrderJD {
 	o.initHTTPClient()
 	o.skuChan = make(chan string, 1)
 	o.skuState = make(map[string]bool, len(skuMetas))
+	o.expired = false
 	for skuid := range skuMetas {
 		o.skuState[skuid] = false
 	}
